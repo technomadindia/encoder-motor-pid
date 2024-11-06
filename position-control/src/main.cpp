@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <util/atomic.h> // For the ATOMIC_BLOCK macro
 
+// #define _DEBUG
+
 #define ENCA_PIN 2
 #define ENCB_PIN 3
 #define M1_PIN 5
@@ -14,23 +16,26 @@ const float KI = 0.05;
 // specify interrupt variable as volatile
 volatile int g_positionInterrupt = 0;
 
-long prevTime = 0;
-
 void readEncoder();
 float pid_controller(int desired, int measured, float deltaTime, float kp, float kd, float ki);
 void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin);
 
 void setup() {
+#if _DEBUG
     Serial.begin(9600);
+#endif
+
+    // set I/O configuration
     pinMode(ENCA_PIN, INPUT);
     pinMode(ENCB_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(ENCA_PIN), readEncoder, RISING);
 
     pinMode(M1_PIN, OUTPUT);
     pinMode(M2_PIN, OUTPUT);
-
-    Serial.println("targetPosition currentPosition motorPower");
 }
+
+// Timing loop state
+long prevTime = 0;
 
 void loop() {
     // set target position
@@ -48,10 +53,11 @@ void loop() {
         currentPosition = g_positionInterrupt;
     }
 
+    // update feedback control loop
     float controlSignal = pid_controller(targetPosition, currentPosition, deltaTime, KP, KD, KI);
 
     // motor power clipped to 8-bit PWM range
-    float motorPower = fabs(controlSignal);
+    int motorPower = (int)fabs(controlSignal);
     if (motorPower > 255) {
         motorPower = 255;
     }
@@ -63,21 +69,28 @@ void loop() {
     }
 
     // signal the motor
+    // ps: 20% deadband
     setMotor((motorPower > 51) ? motorDirection : 0, motorPower, M1_PIN, M2_PIN);
 
-    Serial.print(targetPosition);
-    Serial.print(" ");
-    Serial.print(currentPosition);
-    Serial.print(" ");
-    Serial.print(motorPower);
-    Serial.println();
+#if _DEBUG
+    // debug: monitoring
+    Serial.print(">targetPosition:");
+    Serial.println(targetPosition);
+    // Serial.print(" ");
+    Serial.print(">currentPosition:");
+    Serial.println(currentPosition);
+    // Serial.print(" ");
+    Serial.print(">motorPower:");
+    Serial.println(motorPower);
+#endif
 }
 
-void readEncoder() {
+// Encoder interrupt routine
+void readEncoder() { // on rising edge of Encode A
     int encBState = digitalRead(ENCB_PIN);
-    if (encBState > 0) {
+    if (encBState > 0) { // if Encoder B is ahead implies CW rotation
         g_positionInterrupt++;
-    } else {
+    } else { // if Encoder B is lagging implies CCW rotation
         g_positionInterrupt--;
     }
 }
@@ -86,6 +99,7 @@ void readEncoder() {
 float previousError = 0;
 float errorIntegral = 0;
 
+// PID control feedback loop
 float pid_controller(int desired, int measured, float deltaTime, float kp, float kd, float ki) {
     // error
     int error = desired - measured;
@@ -105,6 +119,9 @@ float pid_controller(int desired, int measured, float deltaTime, float kp, float
     return controlSignal;
 }
 
+// direction must be either of 1, 0, -1
+// pwmValues must be [0, 255]
+// motor1_pin and motor2_pin both must support pwm output
 void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin) {
     if (direction == 1) { // CW rotation
         analogWrite(motor1_pin, pwmValue);
