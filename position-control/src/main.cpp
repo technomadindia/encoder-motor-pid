@@ -3,8 +3,8 @@
 
 // #define _DEBUG
 
-#define ENCA_PIN 2
-#define ENCB_PIN 3
+#define ENCA_PIN 3
+#define ENCB_PIN 4
 #define M1_PIN 5
 #define M2_PIN 6
 
@@ -21,8 +21,9 @@ float pid_controller(int desired, int measured, float deltaTime, float kp, float
 void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin);
 
 void setup() {
+    // put your setup code here, to run once:
 #if _DEBUG
-    Serial.begin(9600);
+    Serial.begin(115200);
 #endif
 
     // set I/O configuration
@@ -38,6 +39,8 @@ void setup() {
 long prevTime = 0;
 
 void loop() {
+    // put your main code here, to run repeatedly:
+
     // set target position
     int targetPosition = 350 * sin(prevTime / 1e6);
 
