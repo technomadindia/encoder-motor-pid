@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <util/atomic.h> // For the ATOMIC_BLOCK macro
 
-// #define _DEBUG
+#define _DEBUG
 
 #define ENCA_PIN 3
 #define ENCB_PIN 4
@@ -22,7 +22,7 @@ void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin);
 
 void setup() {
     // put your setup code here, to run once:
-#if _DEBUG
+#ifdef _DEBUG
     Serial.begin(115200);
 #endif
 
@@ -75,8 +75,8 @@ void loop() {
     // ps: 20% deadband
     setMotor((motorPower > 51) ? motorDirection : 0, motorPower, M1_PIN, M2_PIN);
 
-#if _DEBUG
-    // debug: monitoring
+#ifdef _DEBUG
+    // debug: teleplot monitoring
     Serial.print(">targetPosition:");
     Serial.println(targetPosition);
     // Serial.print(" ");
