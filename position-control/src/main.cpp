@@ -3,6 +3,7 @@
 
 #define _DEBUG
 
+#define SLEEP_PIN 2
 #define ENCA_PIN 3
 #define ENCB_PIN 4
 #define M1_PIN 5
@@ -30,7 +31,7 @@ void setup() {
     pinMode(ENCA_PIN, INPUT);
     pinMode(ENCB_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(ENCA_PIN), readEncoder, RISING);
-
+    pinMode(SLEEP_PIN, OUTPUT);
     pinMode(M1_PIN, OUTPUT);
     pinMode(M2_PIN, OUTPUT);
 }
@@ -42,7 +43,7 @@ void loop() {
     // put your main code here, to run repeatedly:
 
     // set target position
-    int targetPosition = 350 * sin(prevTime / 1e6);
+    int targetPosition = 700; // 350 * sin(prevTime / 1e6);
 
     // time difference
     long currTime = micros();
@@ -59,30 +60,33 @@ void loop() {
     // update feedback control loop
     float controlSignal = pid_controller(targetPosition, currentPosition, deltaTime, KP, KD, KI);
 
+    // motor direction based on sign of control signal
+    int motorDirection = (controlSignal < 0) ? -1 : 1;
+
     // motor power clipped to 8-bit PWM range
     int motorPower = (int)fabs(controlSignal);
-    if (motorPower > 255) {
+    if (motorPower >= 255) { // clamp to max PWM
         motorPower = 255;
-    }
-
-    // motor direction based on sign of control signal
-    int motorDirection = 1;
-    if (controlSignal < 0) {
-        motorDirection = -1;
+    } else if (motorPower >= 51) { // linear zone
+        motorPower = motorPower;
+    } else if (motorPower >= 13) { // clamp to deadzone
+        motorPower = 51;
+    } else if (motorPower > 0) { // clamp to zero
+        motorPower = 0;
+        motorDirection = 0;
     }
 
     // signal the motor
-    // ps: 20% deadband
-    setMotor((motorPower > 51) ? motorDirection : 0, motorPower, M1_PIN, M2_PIN);
+    setMotor(motorDirection, motorPower, M1_PIN, M2_PIN);
 
 #ifdef _DEBUG
     // debug: teleplot monitoring
     Serial.print(">targetPosition:");
     Serial.println(targetPosition);
-    // Serial.print(" ");
     Serial.print(">currentPosition:");
     Serial.println(currentPosition);
-    // Serial.print(" ");
+    Serial.print(">controlSignal:");
+    Serial.println(controlSignal);
     Serial.print(">motorPower:");
     Serial.println(motorPower);
 #endif
@@ -126,14 +130,19 @@ float pid_controller(int desired, int measured, float deltaTime, float kp, float
 // pwmValues must be [0, 255]
 // motor1_pin and motor2_pin both must support pwm output
 void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin) {
-    if (direction == 1) { // CW rotation
+    if (0 == direction) {              // free wheeling
+        digitalWrite(SLEEP_PIN, LOW);  // sleep
+    } else if (0 == pwmValue) {        // braking
+        digitalWrite(SLEEP_PIN, HIGH); // wake
+        digitalWrite(motor1_pin, LOW);
+        digitalWrite(motor2_pin, LOW);
+    } else if (1 == direction) {       // CW rotation
+        digitalWrite(SLEEP_PIN, HIGH); // wake
         analogWrite(motor1_pin, pwmValue);
         digitalWrite(motor2_pin, LOW);
-    } else if (direction == -1) { // CCW rotation
+    } else if (-1 == direction) {      // CCW rotation
+        digitalWrite(SLEEP_PIN, HIGH); // wake
         digitalWrite(motor1_pin, LOW);
         analogWrite(motor2_pin, pwmValue);
-    } else { // braking
-        digitalWrite(motor1_pin, LOW);
-        digitalWrite(motor2_pin, LOW);
     }
 }
