@@ -11,28 +11,25 @@
 #define M2_PIN 6
 
 // PID constants for N20 motor
-const float KP = 1.0;
-const float KD = 0.01;
-const float KI = 0.05;
+const float KP = 1.00f;
+const float KD = 0.01f;
+const float KI = 0.05f;
+
+// conversion factor to encoder velocity to motor power
+float KV = 0.0f;
 
 // Timing loop state
-long prevTime = 0;
-int prevPosition = 0;
+long prevTime = 0L;
+long prevPosition = 0L;
 
 // specify interrupt variable as volatile
-volatile int g_positionInterrupt = 0;
-volatile float g_velocityInterrupt = 0;
-volatile long prevT_i = 0;
+volatile long g_positionInterrupt = 0L;
 
-float v1Filt = 0;
-float v1Prev = 0;
-float v2Filt = 0;
-float v2Prev = 0;
-
-float eintegral = 0;
+float v1Filt = 0.0f;
+float v1Prev = 0.0f;
 
 void readEncoder();
-float pid_controller(int desired, int measured, float deltaTime, float kp, float kd, float ki);
+float pid_controller(float desired, float measured, float deltaTime, float kp, float kd, float ki);
 void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin);
 
 void setup() {
@@ -40,6 +37,14 @@ void setup() {
 #ifdef _DEBUG
     Serial.begin(115200);
 #endif
+
+    // motor specs
+    float rpm = 300;
+    int gearRatio = 100;
+    int encoderRate = 7;
+
+    // velocity conversion factor
+    KV = (255.0f * 60.0f) / (encoderRate * gearRatio * rpm);
 
     // set I/O configuration
     pinMode(ENCA_PIN, INPUT);
@@ -54,50 +59,40 @@ void loop() {
 
     // Read the position in an atomic block to avoid a potential
     // misread if the interrupt coincides with this code running
-    int currentPosition = 0;
-    float velocity2 = 0;
+    long currentPosition = 0L;
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
         currentPosition = g_positionInterrupt;
-        velocity2 = g_velocityInterrupt;
     }
 
     // Compute velocity with method 1
     long currTime = micros();
-    float deltaTime = ((float)(currTime - prevTime)) / 1.0e6;
+    float deltaTime = ((float)(currTime - prevTime)) / 1.0e6f;
     float velocity1 = ((float)(currentPosition - prevPosition)) / deltaTime;
     prevPosition = currentPosition;
     prevTime = currTime;
 
     // Convert count/s to RPM
-    float v1 = velocity1 / 300.0 * 60.0;
-    float v2 = velocity2 / 300.0 * 60.0;
+    float v1 = velocity1 * KV;
 
     // Low-pass filter (25 Hz cutoff)
-    v1Filt = 0.854 * v1Filt + 0.0728 * v1 + 0.0728 * v1Prev;
+    v1Filt = 0.8544f * v1Filt + 0.0728f * v1 + 0.0728f * v1Prev;
     v1Prev = v1;
-    v2Filt = 0.854 * v2Filt + 0.0728 * v2 + 0.0728 * v2Prev;
-    v2Prev = v2;
 
     // Set a target
-    float vt = 255 * (sin(currTime / 1e6) > 0);
+    float vt = 150 * (sin(currTime / 1e6) > 0); // 150.0f * sin(currTime / 1e6f) + 150.0f;
 
     // update feedback control loop
     float controlSignal = pid_controller(vt, v1Filt, deltaTime, KP, KD, KI);
 
     // motor direction based on sign of control signal
-    int motorDirection = (controlSignal < 0) ? -1 : 1;
+    int motorDirection = (controlSignal < 0.0f) ? -1 : 1;
 
     // motor power clipped to 8-bit PWM range
     int motorPower = (int)fabs(controlSignal);
     if (motorPower >= 255) { // clamp to max PWM
         motorPower = 255;
-    } else if (motorPower >= 51) { // linear zone
-        motorPower = motorPower;
-    } else if (motorPower >= 13) { // clamp to deadzone
-        motorPower = 51;
-    } else if (motorPower > 0) { // clamp to zero
+    } else if (motorPower < 51) {
         motorPower = 0;
-        motorDirection = 0;
     }
 
     // signal the motor
@@ -105,17 +100,19 @@ void loop() {
 
 #ifdef _DEBUG
     // debug: teleplot monitoring
-    Serial.print(">vt:");
+    Serial.print(">vtgt:");
     Serial.println(vt);
-    Serial.print(">v1Filt:");
+    Serial.print(">v1:");
+    Serial.println(v1);
+    Serial.print(">v1Fil:");
     Serial.println(v1Filt);
-    Serial.print(">cs:");
+    Serial.print(">csig:");
     Serial.println(controlSignal);
-    Serial.print(">mp:");
+    Serial.print(">mpwr:");
     Serial.println(motorPower);
+    Serial.print(">cpos:");
+    Serial.println(currentPosition);
 #endif
-
-    delay(1);
 }
 
 // Encoder interrupt routine
@@ -126,22 +123,16 @@ void readEncoder() { // on rising edge of Encode A
     } else { // if Encoder B is lagging implies CCW rotation
         g_positionInterrupt--;
     }
-
-    // Compute velocity with method 2
-    long currTime = micros();
-    float deltaTime = ((float)(currTime - prevT_i)) / 1.0e6;
-    g_velocityInterrupt = 1 / deltaTime;
-    prevT_i = currTime;
 }
 
 // PID state variables
-float previousError = 0;
-float errorIntegral = 0;
+float previousError = 0.0f;
+float errorIntegral = 0.0f;
 
 // PID control feedback loop
-float pid_controller(int desired, int measured, float deltaTime, float kp, float kd, float ki) {
+float pid_controller(float desired, float measured, float deltaTime, float kp, float kd, float ki) {
     // error
-    int error = desired - measured;
+    float error = desired - measured;
 
     // derivative
     float errorDerivative = (error - previousError) / (deltaTime);
