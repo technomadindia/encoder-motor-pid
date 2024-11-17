@@ -10,24 +10,9 @@
 #define M1_PIN 5
 #define M2_PIN 6
 
-// PID constants for N20 motor
-const float KP = 5.00f;
-const float KD = 0.05f;
-const float KI = 10.0f;
-
-// conversion factor to encoder velocity to motor power
-float KV = 0.0f;
-
-// Timing loop state
-long prevTime = 0L;
-long prevPosition = 0L;
-
 // specify interrupt variable as volatile
 volatile long g_positionInterrupt = 0L;
 volatile bool timerTrigger = true;
-
-float v1Filt = 0.0f;
-float v1Prev = 0.0f;
 
 // Encoder interrupt routine
 void readEncoder() { // on rising edge of Encode A
@@ -89,6 +74,9 @@ void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin) {
     }
 }
 
+// conversion factor to encoder velocity to motor power
+float KV = 0.0f;
+
 void setup() {
     // put your setup code here, to run once:
 #ifdef _DEBUG
@@ -96,12 +84,12 @@ void setup() {
 #endif
 
     // motor specs
-    float rpm = 240;
+    float rpm = 300;
     int gearRatio = 100;
     int encoderRate = 7;
 
     // velocity conversion factor
-    KV = (255.0f * 60.0f) / (encoderRate * gearRatio * rpm);
+    KV = 60.0f / (encoderRate * gearRatio * rpm);
 
     // set I/O configuration
     pinMode(ENCA_PIN, INPUT);
@@ -111,10 +99,23 @@ void setup() {
     pinMode(M1_PIN, OUTPUT);
     pinMode(M2_PIN, OUTPUT);
 
-    // setup timer2 for control loop update every 20ms
-    Timer1.initialize(20000);
+    // setup timer2 for control loop update every 50ms
+    Timer1.initialize(50000);
     Timer1.attachInterrupt(timerCallback);
 }
+
+// Timing loop state
+long prevTime = 0L;
+long prevPosition = 0L;
+
+// filter history
+float v1Filt = 0.0f;
+float v1Prev = 0.0f;
+
+// PID constants for N20 motor
+const float KP = 1.00f;
+const float KD = 0.01f;
+const float KI = 0.05f;
 
 void loop() {
     // only if time for control loop update
@@ -141,8 +142,8 @@ void loop() {
         v1Prev = v1;
 
         // Set a target
-        // float vt = 240 * (sin(currTime / 1e6) > 0);
-        float vt = 120.0f * sin(currTime / 1e6f) + 120.0f;
+        // float vt = 0.96f * (sin(currTime / 1e6f) > 0.0f);
+        float vt = 0.48f * sin(currTime / 1e6f) + 0.48f;
 
         // update feedback control loop
         float controlSignal = pid_controller(vt, v1Filt, deltaTime, KP, KD, KI);
@@ -151,12 +152,12 @@ void loop() {
         int motorDirection = (controlSignal < 0.0f) ? -1 : 1;
 
         // motor power clipped to 8-bit PWM range
-        int motorPower = (int)fabs(controlSignal);
+        int motorPower = (int)fabs(255.0f * controlSignal);
         if (motorPower >= 255) { // clamp to max PWM
             motorPower = 255;
-        }  /* else if (motorPower < 51) {
-            motorPower = 0;
-        } */
+        } /* else if (motorPower < 51) {
+           motorPower = 0;
+       } */
 
         // signal the motor
         setMotor(motorDirection, motorPower, M1_PIN, M2_PIN);
