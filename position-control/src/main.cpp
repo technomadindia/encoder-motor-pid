@@ -19,15 +19,65 @@ const float KI = 0.05;
 volatile long g_positionInterrupt = 0L;
 volatile bool timerTrigger = true;
 
-void readEncoder();
+// Encoder interrupt routine
+void readEncoder() { // on rising edge of Encode A
+    int encBState = digitalRead(ENCB_PIN);
+    if (encBState > 0) { // if Encoder B is ahead implies CW rotation
+        g_positionInterrupt++;
+    } else { // if Encoder B is lagging implies CCW rotation
+        g_positionInterrupt--;
+    }
+}
 
 // set trigger for control loop update
 void timerCallback() {
     timerTrigger = true;
 }
 
-float pid_controller(float desired, float measured, float deltaTime, float kp, float kd, float ki);
-void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin);
+// PID state variables
+float previousError = 0.0f;
+float errorIntegral = 0.0f;
+
+// PID control feedback loop
+float pid_controller(float desired, float measured, float deltaTime, float kp, float kd, float ki) {
+    // error
+    float error = desired - measured;
+
+    // derivative
+    float errorDerivative = (error - previousError) / (deltaTime);
+
+    // integral
+    errorIntegral += error * deltaTime;
+
+    // control signal
+    float controlSignal = kp * error + kd * errorDerivative + ki * errorIntegral;
+
+    // store previous error
+    previousError = error;
+
+    return controlSignal;
+}
+
+// direction must be either of 1, 0, -1
+// pwmValues must be [0, 255]
+// motor1_pin and motor2_pin both must support pwm output
+void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin) {
+    if (0 == direction) {              // free wheeling
+        digitalWrite(SLEEP_PIN, LOW);  // sleep
+    } else if (0 == pwmValue) {        // braking
+        digitalWrite(SLEEP_PIN, HIGH); // wake
+        digitalWrite(motor1_pin, HIGH);
+        digitalWrite(motor2_pin, HIGH);
+    } else if (1 == direction) {       // CW rotation
+        digitalWrite(SLEEP_PIN, HIGH); // wake
+        analogWrite(motor1_pin, pwmValue);
+        digitalWrite(motor2_pin, LOW);
+    } else if (-1 == direction) {      // CCW rotation
+        digitalWrite(SLEEP_PIN, HIGH); // wake
+        digitalWrite(motor1_pin, LOW);
+        analogWrite(motor2_pin, pwmValue);
+    }
+}
 
 // Timing loop state
 static unsigned long prevTime = 0UL;
@@ -106,60 +156,5 @@ void loop() {
         Serial.print(">motorPower:");
         Serial.println(motorPower);
 #endif
-    }
-}
-
-// Encoder interrupt routine
-void readEncoder() { // on rising edge of Encode A
-    int encBState = digitalRead(ENCB_PIN);
-    if (encBState > 0) { // if Encoder B is ahead implies CW rotation
-        g_positionInterrupt++;
-    } else { // if Encoder B is lagging implies CCW rotation
-        g_positionInterrupt--;
-    }
-}
-
-// PID state variables
-float previousError = 0.0f;
-float errorIntegral = 0.0f;
-
-// PID control feedback loop
-float pid_controller(float desired, float measured, float deltaTime, float kp, float kd, float ki) {
-    // error
-    float error = desired - measured;
-
-    // derivative
-    float errorDerivative = (error - previousError) / (deltaTime);
-
-    // integral
-    errorIntegral += error * deltaTime;
-
-    // control signal
-    float controlSignal = kp * error + kd * errorDerivative + ki * errorIntegral;
-
-    // store previous error
-    previousError = error;
-
-    return controlSignal;
-}
-
-// direction must be either of 1, 0, -1
-// pwmValues must be [0, 255]
-// motor1_pin and motor2_pin both must support pwm output
-void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin) {
-    if (0 == direction) {              // free wheeling
-        digitalWrite(SLEEP_PIN, LOW);  // sleep
-    } else if (0 == pwmValue) {        // braking
-        digitalWrite(SLEEP_PIN, HIGH); // wake
-        digitalWrite(motor1_pin, HIGH);
-        digitalWrite(motor2_pin, HIGH);
-    } else if (1 == direction) {       // CW rotation
-        digitalWrite(SLEEP_PIN, HIGH); // wake
-        analogWrite(motor1_pin, pwmValue);
-        digitalWrite(motor2_pin, LOW);
-    } else if (-1 == direction) {      // CCW rotation
-        digitalWrite(SLEEP_PIN, HIGH); // wake
-        digitalWrite(motor1_pin, LOW);
-        analogWrite(motor2_pin, pwmValue);
     }
 }
