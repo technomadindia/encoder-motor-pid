@@ -2,7 +2,7 @@
 #include <TimerOne.h>
 #include <util/atomic.h> // For the ATOMIC_BLOCK macro
 
-#define _DEBUG
+// #define _DEBUG
 
 #define SLEEP_PIN 2
 #define ENCA_PIN 3
@@ -11,9 +11,9 @@
 #define M2_PIN 6
 
 // PID constants for N20 motor
-const float KP = 1.0;
-const float KD = 0.1;
-const float KI = 0.05;
+const float KP = 1.0f;
+const float KD = 0.1f;
+const float KI = 0.05f;
 
 // specify interrupt variable as volatile
 volatile long g_positionInterrupt = 0L;
@@ -108,20 +108,20 @@ void loop() {
     // only if time for control loop update
     if (true == timerTrigger) {
         // time difference
-        long currTime = micros();
+        unsigned long currTime = micros();
         float deltaTime = ((float)(currTime - prevTime)) / (1.0e6f);
         prevTime = currTime;
 
         // Read the position in an atomic block to avoid a potential
         // misread if the interrupt coincides with this code running
-        int currentPosition = 0;
+        long currentPosition = 0L;
         ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
             currentPosition = g_positionInterrupt;
         }
 
         // set target position
-        int targetPosition = 350.0f * (sin(currTime / 1e6f) > 0.0f);
-        // int targetPosition = 350.0f * sin(currTime / 1e6f);
+        long targetPosition = (long)(350.0f * (sin(currTime / 1e6f) > 0.0f));
+        // int targetPosition = (long)(350.0f * sin(currTime / 1e6f));
 
         // update feedback control loop
         float controlSignal = pid_controller(targetPosition, currentPosition, deltaTime, KP, KD, KI);
@@ -147,14 +147,13 @@ void loop() {
 
 #ifdef _DEBUG
         // debug: teleplot monitoring
-        Serial.print(">targetPosition:");
-        Serial.println(targetPosition);
-        Serial.print(">currentPosition:");
-        Serial.println(currentPosition);
-        Serial.print(">controlSignal:");
-        Serial.println(controlSignal);
-        Serial.print(">motorPower:");
-        Serial.println(motorPower);
+        char buffer[256];
+        sprintf(buffer, ">dt:%d\r\n>SP:%ld\r\n>PV:%ld\r\n>CS:%d\r\n>mpwr:%d\r\n",
+                (int)(deltaTime * 1e6f), targetPosition, currentPosition, (int)controlSignal, motorPower);
+        Serial.print(buffer);
 #endif
+
+        // rest trigger
+        timerTrigger = false;
     }
 }
