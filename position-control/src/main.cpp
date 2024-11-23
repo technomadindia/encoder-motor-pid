@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <TimerOne.h>
 #include <util/atomic.h> // For the ATOMIC_BLOCK macro
 
 #define _DEBUG
@@ -15,11 +16,21 @@ const float KD = 0.1;
 const float KI = 0.05;
 
 // specify interrupt variable as volatile
-volatile int g_positionInterrupt = 0;
+volatile long g_positionInterrupt = 0L;
+volatile bool timerTrigger = true;
 
 void readEncoder();
-float pid_controller(int desired, int measured, float deltaTime, float kp, float kd, float ki);
+
+// set trigger for control loop update
+void timerCallback() {
+    timerTrigger = true;
+}
+
+float pid_controller(float desired, float measured, float deltaTime, float kp, float kd, float ki);
 void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin);
+
+// Timing loop state
+static unsigned long prevTime = 0UL;
 
 void setup() {
     // put your setup code here, to run once:
@@ -34,62 +45,68 @@ void setup() {
     pinMode(SLEEP_PIN, OUTPUT);
     pinMode(M1_PIN, OUTPUT);
     pinMode(M2_PIN, OUTPUT);
+
+    // set initial time
+    prevTime = micros();
+
+    // setup timer2 for control loop update
+    Timer1.initialize(1000); // 1 KHz
+    Timer1.attachInterrupt(timerCallback);
 }
 
-// Timing loop state
-long prevTime = 0;
-
 void loop() {
-    // put your main code here, to run repeatedly:
+    // only if time for control loop update
+    if (true == timerTrigger) {
+        // time difference
+        long currTime = micros();
+        float deltaTime = ((float)(currTime - prevTime)) / (1.0e6f);
+        prevTime = currTime;
 
-    // set target position
-    int targetPosition = 700; // 350 * sin(prevTime / 1e6);
+        // Read the position in an atomic block to avoid a potential
+        // misread if the interrupt coincides with this code running
+        int currentPosition = 0;
+        ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+            currentPosition = g_positionInterrupt;
+        }
 
-    // time difference
-    long currTime = micros();
-    float deltaTime = ((float)(currTime - prevTime)) / (1.0e6);
-    prevTime = currTime;
+        // set target position
+        int targetPosition = 350.0f * (sin(currTime / 1e6f) > 0.0f);
+        // int targetPosition = 350.0f * sin(currTime / 1e6f);
 
-    // Read the position in an atomic block to avoid a potential
-    // misread if the interrupt coincides with this code running
-    int currentPosition = 0;
-    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-        currentPosition = g_positionInterrupt;
-    }
+        // update feedback control loop
+        float controlSignal = pid_controller(targetPosition, currentPosition, deltaTime, KP, KD, KI);
 
-    // update feedback control loop
-    float controlSignal = pid_controller(targetPosition, currentPosition, deltaTime, KP, KD, KI);
+        // motor direction based on sign of control signal
+        int motorDirection = (controlSignal < 0.0f) ? -1 : 1;
 
-    // motor direction based on sign of control signal
-    int motorDirection = (controlSignal < 0) ? -1 : 1;
+        // motor power clipped to 8-bit PWM range
+        int motorPower = (int)fabs(controlSignal);
+        if (motorPower >= 255) { // clamp to max PWM
+            motorPower = 255;
+        } else if (motorPower >= 51) { // linear zone
+            motorPower = motorPower;
+        } else if (motorPower >= 13) { // clamp to deadzone
+            motorPower = 51;
+        } else if (motorPower > 0) { // clamp to zero
+            motorPower = 0;
+            motorDirection = 0;
+        }
 
-    // motor power clipped to 8-bit PWM range
-    int motorPower = (int)fabs(controlSignal);
-    if (motorPower >= 255) { // clamp to max PWM
-        motorPower = 255;
-    } else if (motorPower >= 51) { // linear zone
-        motorPower = motorPower;
-    } else if (motorPower >= 13) { // clamp to deadzone
-        motorPower = 51;
-    } else if (motorPower > 0) { // clamp to zero
-        motorPower = 0;
-        motorDirection = 0;
-    }
-
-    // signal the motor
-    setMotor(motorDirection, motorPower, M1_PIN, M2_PIN);
+        // signal the motor
+        setMotor(motorDirection, motorPower, M1_PIN, M2_PIN);
 
 #ifdef _DEBUG
-    // debug: teleplot monitoring
-    Serial.print(">targetPosition:");
-    Serial.println(targetPosition);
-    Serial.print(">currentPosition:");
-    Serial.println(currentPosition);
-    Serial.print(">controlSignal:");
-    Serial.println(controlSignal);
-    Serial.print(">motorPower:");
-    Serial.println(motorPower);
+        // debug: teleplot monitoring
+        Serial.print(">targetPosition:");
+        Serial.println(targetPosition);
+        Serial.print(">currentPosition:");
+        Serial.println(currentPosition);
+        Serial.print(">controlSignal:");
+        Serial.println(controlSignal);
+        Serial.print(">motorPower:");
+        Serial.println(motorPower);
 #endif
+    }
 }
 
 // Encoder interrupt routine
@@ -103,13 +120,13 @@ void readEncoder() { // on rising edge of Encode A
 }
 
 // PID state variables
-float previousError = 0;
-float errorIntegral = 0;
+float previousError = 0.0f;
+float errorIntegral = 0.0f;
 
 // PID control feedback loop
-float pid_controller(int desired, int measured, float deltaTime, float kp, float kd, float ki) {
+float pid_controller(float desired, float measured, float deltaTime, float kp, float kd, float ki) {
     // error
-    int error = desired - measured;
+    float error = desired - measured;
 
     // derivative
     float errorDerivative = (error - previousError) / (deltaTime);
@@ -134,8 +151,8 @@ void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin) {
         digitalWrite(SLEEP_PIN, LOW);  // sleep
     } else if (0 == pwmValue) {        // braking
         digitalWrite(SLEEP_PIN, HIGH); // wake
-        digitalWrite(motor1_pin, LOW);
-        digitalWrite(motor2_pin, LOW);
+        digitalWrite(motor1_pin, HIGH);
+        digitalWrite(motor2_pin, HIGH);
     } else if (1 == direction) {       // CW rotation
         digitalWrite(SLEEP_PIN, HIGH); // wake
         analogWrite(motor1_pin, pwmValue);
