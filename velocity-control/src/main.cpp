@@ -2,7 +2,7 @@
 #include <TimerOne.h>
 #include <util/atomic.h>
 
-#define _DEBUG
+// #define _DEBUG
 
 #define SLEEP_PIN 2
 #define ENCA_PIN 3
@@ -103,11 +103,12 @@ void setup() {
     pinMode(M1_PIN, OUTPUT);
     pinMode(M2_PIN, OUTPUT);
 
+    // set initial time
+    prevTime = micros();
+
     // setup timer2 for control loop update
     Timer1.initialize(1000); // 1 KHz
     Timer1.attachInterrupt(timerCallback);
-
-    prevTime = micros();
 }
 
 // filter history
@@ -171,20 +172,6 @@ void loop() {
         sprintf(buffer, ">dt:%d\r\n>vt:%d\r\n>v1:%d\r\n>mpwr:%d\r\n",
                 (int)(deltaTime * 1e6f), (int)(vt * 100), (int)(v1 * 100), motorPower);
         Serial.print(buffer);
-        /* Serial.print(">dt:");
-        Serial.println(deltaTime, 8);
-        Serial.print(">vtgt:");
-        Serial.println(vt);
-        Serial.print(">v1:");
-        Serial.println(v1);
-        Serial.print(">v1Fil:");
-        Serial.println(v1Filt);
-        Serial.print(">csig:");
-        Serial.println(controlSignal);
-        Serial.print(">mpwr:");
-        Serial.println(motorPower);
-        Serial.print(">cpos:");
-        Serial.println(currentPosition); */
 #endif
 
         // rest trigger
