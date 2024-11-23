@@ -61,8 +61,8 @@ void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin) {
         digitalWrite(SLEEP_PIN, LOW);  // sleep
     } else if (0 == pwmValue) {        // braking
         digitalWrite(SLEEP_PIN, HIGH); // wake
-        digitalWrite(motor1_pin, LOW);
-        digitalWrite(motor2_pin, LOW);
+        digitalWrite(motor1_pin, HIGH);
+        digitalWrite(motor2_pin, HIGH);
     } else if (1 == direction) {       // CW rotation
         digitalWrite(SLEEP_PIN, HIGH); // wake
         analogWrite(motor1_pin, pwmValue);
@@ -74,6 +74,10 @@ void setMotor(int direction, int pwmValue, int motor1_pin, int motor2_pin) {
     }
 }
 
+// Timing loop state
+static unsigned long prevTime = 0UL;
+static long prevPosition = 0L;
+
 // conversion factor to encoder velocity to motor power
 float KV = 0.0f;
 
@@ -84,7 +88,7 @@ void setup() {
 #endif
 
     // motor specs
-    float rpm = 300;
+    float rpm = 180; // 9V/12V at 240 rpm max
     int gearRatio = 100;
     int encoderRate = 7;
 
@@ -99,27 +103,28 @@ void setup() {
     pinMode(M1_PIN, OUTPUT);
     pinMode(M2_PIN, OUTPUT);
 
-    // setup timer2 for control loop update every 50ms
-    Timer1.initialize(50000);
+    // setup timer2 for control loop update
+    Timer1.initialize(1000); // 1 KHz
     Timer1.attachInterrupt(timerCallback);
-}
 
-// Timing loop state
-long prevTime = 0L;
-long prevPosition = 0L;
+    prevTime = micros();
+}
 
 // filter history
 float v1Filt = 0.0f;
 float v1Prev = 0.0f;
 
 // PID constants for N20 motor
-const float KP = 1.00f;
-const float KD = 0.01f;
+const float KP = 3.50f;
+const float KD = 0.00f;
 const float KI = 0.05f;
 
 void loop() {
     // only if time for control loop update
     if (true == timerTrigger) {
+        unsigned long currTime = micros();
+        float deltaTime = ((float)(currTime - prevTime)) / 1.0e6f;
+
         // Read the position in an atomic block to avoid a potential
         // misread if the interrupt coincides with this code running
         long currentPosition = 0L;
@@ -128,8 +133,6 @@ void loop() {
         }
 
         // Compute velocity with method 1
-        long currTime = micros();
-        float deltaTime = ((float)(currTime - prevTime)) / 1.0e6f;
         float velocity1 = ((float)(currentPosition - prevPosition)) / deltaTime;
         prevPosition = currentPosition;
         prevTime = currTime;
@@ -142,8 +145,8 @@ void loop() {
         v1Prev = v1;
 
         // Set a target
-        // float vt = 0.96f * (sin(currTime / 1e6f) > 0.0f);
-        float vt = 0.48f * sin(currTime / 1e6f) + 0.48f;
+        float vt = 1.0f * (sin(currTime / 1e6f) > 0.0f);
+        // float vt = 0.5f * sin(currTime / 1e6f) + 0.5f;
 
         // update feedback control loop
         float controlSignal = pid_controller(vt, v1Filt, deltaTime, KP, KD, KI);
@@ -155,15 +158,21 @@ void loop() {
         int motorPower = (int)fabs(255.0f * controlSignal);
         if (motorPower >= 255) { // clamp to max PWM
             motorPower = 255;
-        } /* else if (motorPower < 51) {
-           motorPower = 0;
-       } */
+        } else if (motorPower < 51 || fabs(vt) < 0.05f) { // clamp to zero below 20% deadzone
+            motorPower = 0;
+        }
 
         // signal the motor
         setMotor(motorDirection, motorPower, M1_PIN, M2_PIN);
 
 #ifdef _DEBUG
         // debug: teleplot monitoring
+        char buffer[256];
+        sprintf(buffer, ">dt:%d\r\n>vt:%d\r\n>v1:%d\r\n>mpwr:%d\r\n",
+                (int)(deltaTime * 1e6f), (int)(vt * 100), (int)(v1 * 100), motorPower);
+        Serial.print(buffer);
+        /* Serial.print(">dt:");
+        Serial.println(deltaTime, 8);
         Serial.print(">vtgt:");
         Serial.println(vt);
         Serial.print(">v1:");
@@ -175,7 +184,7 @@ void loop() {
         Serial.print(">mpwr:");
         Serial.println(motorPower);
         Serial.print(">cpos:");
-        Serial.println(currentPosition);
+        Serial.println(currentPosition); */
 #endif
 
         // rest trigger
